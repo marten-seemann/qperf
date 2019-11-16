@@ -125,7 +125,7 @@ func runServer(port int, duration time.Duration) error {
 	}
 	tlsConf.NextProtos = []string{"qperf"}
 	ln, err := quic.ListenAddr(
-		fmt.Sprintf("localhost:%d", port),
+		fmt.Sprintf("0.0.0.0:%d", port),
 		tlsConf,
 		&quic.Config{},
 	)
