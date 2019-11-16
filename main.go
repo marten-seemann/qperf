@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,10 +15,12 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"os"
 	"sync/atomic"
 	"time"
 
 	quic "github.com/lucas-clemente/quic-go"
+	"github.com/lucas-clemente/quic-go/quictrace"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -31,15 +34,16 @@ func main() {
 	client := flag.String("c", "", "run as client: remote address")
 	port := flag.Int("p", defaultPort, "port")
 	seconds := flag.Int("t", 10, "time in seconds")
+	trace := flag.Bool("trace", false, "enable quic-trace")
 	flag.Parse()
 
 	duration := time.Duration(*seconds) * time.Second
 
 	var err error
 	if *server {
-		err = runServer(*port)
+		err = runServer(*port, *trace)
 	} else {
-		err = runClient(*client, *port, duration)
+		err = runClient(*client, *port, duration, *trace)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -118,16 +122,39 @@ func (c *bandwidthCounter) FinalReport() (startTime time.Time, n uint64) {
 	return c.startTime, atomic.LoadUint64(&c.counter)
 }
 
-func runServer(port int) error {
+func exportTraces(tracer quictrace.Tracer) error {
+	traces := tracer.GetAllTraces()
+	if len(traces) != 1 {
+		return errors.New("expected exactly one trace")
+	}
+	for _, trace := range traces {
+		f, err := os.Create("trace.qtr")
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(trace); err != nil {
+			return err
+		}
+		f.Close()
+		fmt.Println("Wrote trace to", f.Name())
+	}
+	return nil
+}
+
+func runServer(port int, trace bool) error {
 	tlsConf, err := getTLSConfig()
 	if err != nil {
 		return err
 	}
 	tlsConf.NextProtos = []string{"qperf"}
+	var tracer quictrace.Tracer
+	if trace {
+		tracer = quictrace.NewTracer()
+	}
 	ln, err := quic.ListenAddr(
 		fmt.Sprintf("0.0.0.0:%d", port),
 		tlsConf,
-		&quic.Config{},
+		&quic.Config{QuicTracer: tracer},
 	)
 	if err != nil {
 		return err
@@ -162,18 +189,32 @@ func runServer(port int) error {
 			}
 		})
 	}
-	return g.Wait()
+
+	err = g.Wait()
+	if trace {
+		if err := exportTraces(tracer); err != nil {
+			return err
+		}
+	}
+	return err
 }
 
-func runClient(address string, port int, duration time.Duration) error {
+func runClient(address string, port int, duration time.Duration, trace bool) error {
 	fmt.Printf("Connecting to host %s, port %d\n", address, port)
+	var tracer quictrace.Tracer
+	if trace {
+		tracer = quictrace.NewTracer()
+	}
 	sess, err := quic.DialAddr(
 		fmt.Sprintf("%s:%d", address, port),
 		&tls.Config{
 			InsecureSkipVerify: true,
 			NextProtos:         []string{"qperf"},
 		},
-		&quic.Config{MaxIncomingUniStreams: 1000},
+		&quic.Config{
+			MaxIncomingUniStreams: 1000,
+			QuicTracer:            tracer,
+		},
 	)
 	if err != nil {
 		return err
@@ -207,7 +248,13 @@ func runClient(address string, port int, duration time.Duration) error {
 		})
 	}
 
-	return g.Wait()
+	err = g.Wait()
+	if trace {
+		if err := exportTraces(tracer); err != nil {
+			return err
+		}
+	}
+	return err
 }
 
 func getTLSConfig() (*tls.Config, error) {
