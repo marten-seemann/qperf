@@ -37,7 +37,7 @@ func main() {
 
 	var err error
 	if *server {
-		err = runServer(*port, duration)
+		err = runServer(*port)
 	} else {
 		err = runClient(*client, *port, duration)
 	}
@@ -118,7 +118,7 @@ func (c *bandwidthCounter) FinalReport() (startTime time.Time, n uint64) {
 	return c.startTime, atomic.LoadUint64(&c.counter)
 }
 
-func runServer(port int, duration time.Duration) error {
+func runServer(port int) error {
 	tlsConf, err := getTLSConfig()
 	if err != nil {
 		return err
@@ -141,11 +141,6 @@ func runServer(port int, duration time.Duration) error {
 	}
 	raddr := sess.RemoteAddr()
 	fmt.Printf("Accepted connection from %s\n", raddr.(*net.UDPAddr).String())
-
-	timer := time.AfterFunc(duration, func() {
-		sess.Close()
-	})
-	defer timer.Stop()
 
 	var g errgroup.Group
 	var data [1 << 12]byte // 4 kbyte
