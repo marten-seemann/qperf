@@ -187,6 +187,7 @@ func runServer(port int, bufferSize int64, windowSize int64, trace bool) error {
 			MaxReceiveStreamFlowControlWindow:     uint64(windowSize),
 			MaxReceiveConnectionFlowControlWindow: uint64(windowSize),
 			QuicTracer:                            tracer,
+			AcceptToken:                           func(net.Addr, *quic.Token) bool { return true },
 		},
 	)
 	if err != nil {
