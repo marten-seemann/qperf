@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -29,21 +30,46 @@ const (
 	defaultPort = 5201
 )
 
+func parseBytes(s string) (int64, error) {
+	unit := s[len(s)-1]
+	if unit != 'k' && unit != 'm' && unit != 'g' {
+		return strconv.ParseInt(s, 10, 64)
+	}
+	num, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	switch unit {
+	case 'k':
+		return num * 1 << 10, nil
+	case 'm':
+		return num * 1 << 20, nil
+	case 'g':
+		return num * 1 << 30, nil
+	default:
+		panic("invalid unit")
+	}
+}
+
 func main() {
 	server := flag.Bool("s", false, "run as server")
 	client := flag.String("c", "", "run as client: remote address")
 	port := flag.Int("p", defaultPort, "port")
 	seconds := flag.Int("t", 10, "time in seconds")
 	trace := flag.Bool("trace", false, "enable quic-trace")
+	bufferSizeStr := flag.String("l", "2k", "[kmg] length of the buffer to read and write")
 	flag.Parse()
 
 	duration := time.Duration(*seconds) * time.Second
+	bufferSize, err := parseBytes(*bufferSizeStr)
+	if err != nil {
+		log.Fatalf("Invalid buffer size: %s", err.Error())
+	}
 
-	var err error
 	if *server {
-		err = runServer(*port, *trace)
+		err = runServer(*port, bufferSize, *trace)
 	} else {
-		err = runClient(*client, *port, duration, *trace)
+		err = runClient(*client, *port, duration, bufferSize, *trace)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -141,7 +167,7 @@ func exportTraces(tracer quictrace.Tracer) error {
 	return nil
 }
 
-func runServer(port int, trace bool) error {
+func runServer(port int, bufferSize int64, trace bool) error {
 	tlsConf, err := getTLSConfig()
 	if err != nil {
 		return err
@@ -181,7 +207,7 @@ func runServer(port int, trace bool) error {
 
 		g.Go(func() error {
 			for {
-				n, err := io.CopyN(ioutil.Discard, str, 1<<9)
+				n, err := io.CopyN(ioutil.Discard, str, int64(bufferSize))
 				bc.Add(int(n))
 				if err != nil {
 					return err
@@ -199,7 +225,7 @@ func runServer(port int, trace bool) error {
 	return err
 }
 
-func runClient(address string, port int, duration time.Duration, trace bool) error {
+func runClient(address string, port int, duration time.Duration, bufferSize int64, trace bool) error {
 	fmt.Printf("Connecting to host %s, port %d\n", address, port)
 	var tracer quictrace.Tracer
 	if trace {
@@ -229,7 +255,7 @@ func runClient(address string, port int, duration time.Duration, trace bool) err
 	go bc.Run(sess.Context().Done())
 
 	var g errgroup.Group
-	var data [1 << 12]byte // 4 kbyte
+	data := make([]byte, bufferSize)
 	for i := 0; i < numStreams; i++ {
 		str, err := sess.OpenUniStream()
 		if err != nil {
@@ -237,7 +263,7 @@ func runClient(address string, port int, duration time.Duration, trace bool) err
 		}
 		g.Go(func() error {
 			for {
-				n, err := str.Write(data[:])
+				n, err := str.Write(data)
 				bc.Add(n)
 				if err != nil {
 					return err
