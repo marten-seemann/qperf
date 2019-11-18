@@ -25,10 +25,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const (
-	numStreams  = 20
-	defaultPort = 5201
-)
+const defaultPort = 5201
 
 func parseBytes(s string) (int64, error) {
 	unit := s[len(s)-1]
@@ -59,6 +56,7 @@ func main() {
 	trace := flag.Bool("trace", false, "enable quic-trace")
 	bufferSizeStr := flag.String("l", "2k", "[kmg] length of the buffer to read and write")
 	windowSizeStr := flag.String("w", "10m", "[kmg] receive window size (both stream and connection). Only valid for the server")
+	numStreams := flag.Int("P", 20, "number of parallel client streams to run")
 	flag.Parse()
 
 	duration := time.Duration(*seconds) * time.Second
@@ -74,7 +72,7 @@ func main() {
 	if *server {
 		err = runServer(*port, bufferSize, windowSize, *trace)
 	} else {
-		err = runClient(*client, *port, duration, bufferSize, *trace)
+		err = runClient(*client, *port, duration, *numStreams, bufferSize, *trace)
 	}
 	if err != nil {
 		log.Fatal(err)
@@ -234,7 +232,7 @@ func runServer(port int, bufferSize int64, windowSize int64, trace bool) error {
 	return err
 }
 
-func runClient(address string, port int, duration time.Duration, bufferSize int64, trace bool) error {
+func runClient(address string, port int, duration time.Duration, numStreams int, bufferSize int64, trace bool) error {
 	fmt.Printf("Connecting to host %s, port %d\n", address, port)
 	var tracer quictrace.Tracer
 	if trace {
