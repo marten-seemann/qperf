@@ -169,20 +169,20 @@ func runServer(port int, trace bool) error {
 	raddr := sess.RemoteAddr()
 	fmt.Printf("Accepted connection from %s\n", raddr.(*net.UDPAddr).String())
 
-	var g errgroup.Group
-	var data [1 << 12]byte // 4 kbyte
 	var bc bandwidthCounter
 	go bc.Run(sess.Context().Done())
 
-	for i := 0; i < numStreams; i++ {
-		str, err := sess.OpenUniStream()
+	var g errgroup.Group
+	for {
+		str, err := sess.AcceptUniStream(context.Background())
 		if err != nil {
-			return err
+			break
 		}
+
 		g.Go(func() error {
 			for {
-				n, err := str.Write(data[:])
-				bc.Add(n)
+				n, err := io.CopyN(ioutil.Discard, str, 1<<9)
+				bc.Add(int(n))
 				if err != nil {
 					return err
 				}
@@ -219,8 +219,6 @@ func runClient(address string, port int, duration time.Duration, trace bool) err
 	if err != nil {
 		return err
 	}
-	raddr := sess.RemoteAddr()
-	fmt.Printf("Accepted connection from %s\n", raddr.(*net.UDPAddr).String())
 
 	timer := time.AfterFunc(duration, func() {
 		sess.Close()
@@ -231,16 +229,16 @@ func runClient(address string, port int, duration time.Duration, trace bool) err
 	go bc.Run(sess.Context().Done())
 
 	var g errgroup.Group
-	for {
-		str, err := sess.AcceptUniStream(context.Background())
+	var data [1 << 12]byte // 4 kbyte
+	for i := 0; i < numStreams; i++ {
+		str, err := sess.OpenUniStream()
 		if err != nil {
-			break
+			return err
 		}
-
 		g.Go(func() error {
 			for {
-				n, err := io.CopyN(ioutil.Discard, str, 1<<9)
-				bc.Add(int(n))
+				n, err := str.Write(data[:])
+				bc.Add(n)
 				if err != nil {
 					return err
 				}
