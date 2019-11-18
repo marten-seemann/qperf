@@ -58,6 +58,7 @@ func main() {
 	seconds := flag.Int("t", 10, "time in seconds")
 	trace := flag.Bool("trace", false, "enable quic-trace")
 	bufferSizeStr := flag.String("l", "2k", "[kmg] length of the buffer to read and write")
+	windowSizeStr := flag.String("w", "10m", "[kmg] receive window size (both stream and connection). Only valid for the server")
 	flag.Parse()
 
 	duration := time.Duration(*seconds) * time.Second
@@ -65,9 +66,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Invalid buffer size: %s", err.Error())
 	}
+	windowSize, err := parseBytes(*windowSizeStr)
+	if err != nil {
+		log.Fatalf("Invalid window size: %s", err.Error())
+	}
 
 	if *server {
-		err = runServer(*port, bufferSize, *trace)
+		err = runServer(*port, bufferSize, windowSize, *trace)
 	} else {
 		err = runClient(*client, *port, duration, bufferSize, *trace)
 	}
@@ -167,7 +172,7 @@ func exportTraces(tracer quictrace.Tracer) error {
 	return nil
 }
 
-func runServer(port int, bufferSize int64, trace bool) error {
+func runServer(port int, bufferSize int64, windowSize int64, trace bool) error {
 	tlsConf, err := getTLSConfig()
 	if err != nil {
 		return err
@@ -180,7 +185,11 @@ func runServer(port int, bufferSize int64, trace bool) error {
 	ln, err := quic.ListenAddr(
 		fmt.Sprintf("0.0.0.0:%d", port),
 		tlsConf,
-		&quic.Config{QuicTracer: tracer},
+		&quic.Config{
+			MaxReceiveStreamFlowControlWindow:     uint64(windowSize),
+			MaxReceiveConnectionFlowControlWindow: uint64(windowSize),
+			QuicTracer:                            tracer,
+		},
 	)
 	if err != nil {
 		return err
