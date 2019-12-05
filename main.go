@@ -15,10 +15,13 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	_ "net/http/pprof"
 
 	quic "github.com/lucas-clemente/quic-go"
 	"github.com/lucas-clemente/quic-go/quictrace"
@@ -49,6 +52,11 @@ func parseBytes(s string) (int64, error) {
 }
 
 func main() {
+	// enable pprof profiling
+	go func() {
+		log.Println(http.ListenAndServe("0.0.0.0:6060", nil))
+	}()
+
 	server := flag.Bool("s", false, "run as server")
 	client := flag.String("c", "", "run as client: remote address")
 	port := flag.Int("p", defaultPort, "port")
